@@ -6,10 +6,10 @@
     <title>Endless Parkour Multiplayer - Supabase</title>
     <style>
         * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
-        body { margin: 0; padding: 0; background: #111; color: #fff; font-family: 'Segoe UI', Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+        body { margin: 0; padding: 0; background: #0b0b16; color: #fff; font-family: 'Segoe UI', Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
         #gameWrapper { position: relative; width: 800px; height: 500px; }
-        canvas { background: #1a1a2e; border: 3px solid #0f3460; display: block; }
-        #menuOverlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 22, 38, 0.95); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
+        canvas { background: transparent; border: 3px solid #0f3460; display: block; box-shadow: 0 0 25px rgba(15, 52, 96, 0.5); }
+        #menuOverlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(11, 11, 22, 0.95); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 10; }
         h1 { font-size: 42px; margin-bottom: 10px; color: #e94560; text-shadow: 0 0 10px rgba(233,69,96,0.5); text-align: center; }
         p { margin-bottom: 30px; color: #848ccf; text-align: center; padding: 0 20px; }
         button { padding: 15px 40px; font-size: 20px; font-weight: bold; background: #e94560; color: white; border: none; border-radius: 30px; cursor: pointer; box-shadow: 0 5px 15px rgba(233,69,96,0.4); transition: 0.2s; }
@@ -27,7 +27,7 @@
     <div id="gameWrapper">
         <div id="menuOverlay">
             <h1 id="menuTitle">PARKOUR ENDLESS</h1>
-            <p id="menuDesc">Né hố tử thần. Chạy vô tận cùng bạn bè trên Vercel!</p>
+            <p id="menuDesc">Né hố tử thần và gai nhọn. Chạy vô tận cùng bạn bè trên Vercel!</p>
             <button id="startBtn">VÀO CHƠI</button>
         </div>
         <canvas id="gameCanvas" width="800" height="500"></canvas>
@@ -41,8 +41,8 @@
     </div>
 
 <script>
-    const SUPABASE_URL = "https://qpmgpexceprtophzydvf.supabase.co";
-    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFwbWdwZXhjZXBydG9waHp5ZHZmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM4NjEyMDUsImV4cCI6MjA5OTQzNzIwNX0.51n1xC-J5p7bEnO1_c0g-uvLmjsppV101kauaYEtp0I"; 
+    const SUPABASE_URL = "https://THAY_THẾ_URL_CỦA_BẠN.supabase.co";
+    const SUPABASE_KEY = "THAY_THẾ_ANON_KEY_CỦA_BẠN"; 
     
     let supabase = null;
     let channel = null;
@@ -52,8 +52,11 @@
             supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
                 auth: { persistSession: false }
             });
-            channel = supabase.channel('parkour_arena', {
-                config: { broadcast: { self: false, ack: false } }
+            channel = supabase.channel('room_global', {
+                config: { 
+                    broadcast: { self: false, ack: false },
+                    presence: { key: "p_" + Math.random().toString(36).substr(2, 5) }
+                }
             });
             channel
             .on('broadcast', { event: 'move' }, (payload) => {
@@ -66,12 +69,12 @@
             .subscribe();
         }
     } catch (e) {
-        console.log("Chạy chế độ Offline do chưa có Supabase Key");
+        console.log("Offline mode");
     }
 
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
-    const myId = "p_" + Math.random().toString(36).substr(2, 9);
+    const myId = "p_" + Math.random().toString(36).substr(2, 5);
     const pSize = 30;
     
     let localPlayer = {
@@ -82,6 +85,8 @@
     
     let players = {};
     let obstacles = [];
+    let spikes = [];
+    let stars = [];
     let gameSpeed = 4;
     let obstacleTimer = 0;
     let seed = 0;
@@ -90,6 +95,15 @@
     const jumpForce = -12;
     const speed = 5;
     const groundY = 350;
+
+    for (let i = 0; i < 60; i++) {
+        stars.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * (canvas.height - 120),
+            size: Math.random() * 2,
+            speed: Math.random() * 0.5 + 0.1
+        });
+    }
 
     const keys = { w: false, a: false, s: false, d: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
     window.addEventListener('keydown', (e) => { if(e.key in keys) keys[e.key] = true; });
@@ -115,6 +129,7 @@
         localPlayer.x = 100 + Math.random() * 80;
         localPlayer.y = groundY;
         obstacles = [];
+        spikes = [];
         gameSpeed = 4;
         obstacleTimer = 0;
         seed = Math.floor(Date.now() / 100000); 
@@ -123,6 +138,17 @@
     function seededRandom() {
         let x = Math.sin(seed++) * 10000;
         return x - Math.floor(x);
+    }
+
+    function triggerGameOver() {
+        localPlayer.isDead = true;
+        if (channel) {
+            channel.send({ type: 'broadcast', event: 'state', payload: { id: myId, isDead: true } });
+        }
+        document.getElementById('menuOverlay').style.display = 'flex';
+        document.getElementById('menuTitle').innerText = "BẠN ĐÃ HY SINH!";
+        document.getElementById('menuDesc').innerText = `Điểm của bạn: ${Math.floor(localPlayer.score)}`;
+        document.getElementById('startBtn').innerText = "CHƠI LẠI";
     }
 
     function updatePhysics() {
@@ -145,14 +171,27 @@
         gameSpeed += 0.0005;
         obstacleTimer++;
         
+        stars.forEach(star => {
+            star.x -= star.speed * (gameSpeed * 0.2);
+            if (star.x < 0) star.x = canvas.width;
+        });
+
         if (obstacleTimer > Math.max(70, 140 - gameSpeed * 5)) {
-            const holeWidth = Math.floor(seededRandom() * 50) + 45;
-            obstacles.push({ x: 850, y: 380, w: holeWidth, h: 120 });
+            let randType = seededRandom();
+            if (randType < 0.6) {
+                const holeWidth = Math.floor(seededRandom() * 50) + 45;
+                obstacles.push({ x: 850, y: 380, w: holeWidth, h: 120 });
+            } else {
+                spikes.push({ x: 850, y: groundY + pSize - 25, w: 25, h: 25 });
+            }
             obstacleTimer = 0;
         }
 
         obstacles.forEach(obs => obs.x -= gameSpeed);
         obstacles = obstacles.filter(obs => obs.x > -100);
+
+        spikes.forEach(spk => spk.x -= gameSpeed);
+        spikes = spikes.filter(spk => spk.x > -50);
 
         let isOnPlatform = localPlayer.y >= groundY;
         obstacles.forEach(obs => {
@@ -167,15 +206,16 @@
             localPlayer.isGrounded = true;
         }
 
-        if (localPlayer.y > canvas.height) {
-            localPlayer.isDead = true;
-            if (channel) {
-                channel.send({ type: 'broadcast', event: 'state', payload: { id: myId, isDead: true } });
+        spikes.forEach(spk => {
+            if (localPlayer.x + pSize - 4 > spk.x && localPlayer.x + 4 < spk.x + spk.w) {
+                if (localPlayer.y + pSize > spk.y && localPlayer.y < spk.y + spk.h) {
+                    triggerGameOver();
+                }
             }
-            document.getElementById('menuOverlay').style.display = 'flex';
-            document.getElementById('menuTitle').innerText = "BẠN ĐÃ RƠI HỐ!";
-            document.getElementById('menuDesc').innerText = `Điểm sinh tồn: ${Math.floor(localPlayer.score)}`;
-            document.getElementById('startBtn').innerText = "CHƠI LẠI";
+        });
+
+        if (localPlayer.y > canvas.height) {
+            triggerGameOver();
         }
 
         if (channel) {
@@ -184,47 +224,24 @@
     }
 
     function draw() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        let bgGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        bgGradient.addColorStop(0, '#0b0b16');
+        bgGradient.addColorStop(0.7, '#141432');
+        bgGradient.addColorStop(1, '#1e1b4b');
+        ctx.fillStyle = bgGradient;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = '#ffffff';
+        stars.forEach(star => {
+            ctx.globalAlpha = Math.random() * 0.4 + 0.6;
+            ctx.fillRect(star.x, star.y, star.size, star.size);
+        });
+        ctx.globalAlpha = 1.0;
+
         updatePhysics();
 
         ctx.fillStyle = '#0f3460';
         ctx.fillRect(0, canvas.height - 120, canvas.width, 120);
 
         obstacles.forEach(obs => {
-            ctx.fillStyle = '#1a1a2e';
-            ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
-            ctx.strokeStyle = '#e94560';
-            ctx.lineWidth = 3;
-            ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
-        });
-
-        if (!localPlayer.inMenu && !localPlayer.isDead) {
-            ctx.fillStyle = localPlayer.color;
-            ctx.fillRect(localPlayer.x, localPlayer.y, pSize, pSize);
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 3;
-            ctx.strokeRect(localPlayer.x, localPlayer.y, pSize, pSize);
-            
-            ctx.fillStyle = '#fff';
-            ctx.font = 'bold 18px sans-serif';
-            ctx.fillText(`Điểm của bạn: ${Math.floor(localPlayer.score)}`, 25, 40);
-            ctx.fillText(`Tốc độ chạy: ${gameSpeed.toFixed(1)}x`, 25, 70);
-        }
-
-        Object.keys(players).forEach(id => {
-            const p = players[id];
-            if (p.id === myId || p.inMenu || p.isDead) return;
-            ctx.fillStyle = p.color;
-            ctx.fillRect(p.x, p.y, pSize, pSize);
-            ctx.fillStyle = 'rgba(255,255,255,0.7)';
-            ctx.font = '12px sans-serif';
-            ctx.fillText(p.id, p.x - 5, p.y - 10);
-        });
-
-        requestAnimationFrame(draw);
-    }
-
-    draw();
-</script>
-</body>
-</html>
+ctx.fillStyle = '#0b0b16';ctx.fillRect(obs.x, obs.y, obs.w, obs.h);ctx.strokeStyle = '#e94560';ctx.lineWidth = 3;ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);});spikes.forEach(spk => {ctx.fillStyle = '#ff4a4a';ctx.beginPath();ctx.moveTo(spk.x, spk.y + spk.h);ctx.lineTo(spk.x + spk.w / 2, spk.y);ctx.lineTo(spk.x + spk.w, spk.y + spk.h);ctx.closePath();ctx.fill();ctx.strokeStyle = '#fff';ctx.lineWidth = 1;ctx.stroke();});if (localPlayer.inMenu === false && localPlayer.isDead === false) {ctx.fillStyle = localPlayer.color;ctx.fillRect(localPlayer.x, localPlayer.y, pSize, pSize);ctx.strokeStyle = '#ffffff';ctx.lineWidth = 3;ctx.strokeRect(localPlayer.x, localPlayer.y, pSize, pSize);ctx.fillStyle = '#fff';ctx.font = 'bold 18px sans-serif';ctx.fillText(Điểm của bạn: ${Math.floor(localPlayer.score)}, 25, 40);ctx.fillText(Tốc độ chạy: ${gameSpeed.toFixed(1)}x, 25, 70);}Object.keys(players).forEach(id => {const p = players[id];if (p.id === myId || p.inMenu || p.isDead) return;ctx.fillStyle = p.color;ctx.fillRect(p.x, p.y, pSize, pSize);ctx.fillStyle = 'rgba(255,255,255,0.7)';ctx.font = '12px sans-serif';ctx.fillText(p.id, p.x - 5, p.y - 10);});requestAnimationFrame(draw);}draw();
