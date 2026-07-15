@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Endless Parkour Multiplayer - Supabase</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            background: #111;
+            color: #fff;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #gameWrapper {
+            position: relative;
+            width: 800px;
+            height: 500px;
+        }
+        canvas {
+            background: #1a1a2e;
+            border: 3px solid #0f3460;
+            display: block;
+        }
+        #menuOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 22, 38, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+        h1 {
+            font-size: 42px;
+            margin-bottom: 10px;
+            color: #e94560;
+            text-shadow: 0 0 10px rgba(233,69,96,0.5);
+            text-align: center;
+        }
+        p {
+            margin-bottom: 30px;
+            color: #848ccf;
+            text-align: center;
+            padding: 0 20px;
+        }
+        button {
+            padding: 15px 40px;
+            font-size: 20px;
+            font-weight: bold;
+            background: #e94560;
+            color: white;
+            border: none;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 5px 15px rgba(233,69,96,0.4);
+            transition: 0.2s;
+        }
+        button:active { transform: scale(0.95); }
+        #mobileControls {
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            width: 100%;
+            display: none;
+            justify-content: space-between;
+            padding: 0 30px;
+            z-index: 5;
+        }
+        .dpad { display: flex; gap: 15px; }
+        .btn {
+            width: 70px;
+            height: 70px;
+            background: rgba(255,255,255,0.15);
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: bold;
+            font-size: 24px;
+            color: white;
+        }
+        .btn:active { background: rgba(233,69,96,0.6); }
+        @media (max-width: 850px) {
+            #mobileControls { display: flex; }
+        }
+    </style>
+    <script src="https://jsdelivr.net"></script>
+</head>
+<body>
+
+    <div id="gameWrapper">
+        <div id="menuOverlay">
+            <h1 id="menuTitle">PARKOUR ENDLESS</h1>
+            <p id="menuDesc">Né hố tử thần. Chạy vô tận cùng bạn bè trên Vercel!</p>
+            <button id="startBtn">VÀO CHƠI</button>
+        </div>
+        <canvas id="gameCanvas" width="800" height="500"></canvas>
+        <div id="mobileControls">
+            <div class="dpad">
+                <div class="btn" id="btnLeft">◀</div>
+                <div class="btn" id="btnRight">▶</div>
+            </div>
+            <div class="btn" id="btnJump">▲</div>
+        </div>
+    </div>
+
+<script>
+    const SUPABASE_URL = "https://qpmgpexceprtophzydvf.supabase.co";
+    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFwbWdwZXhjZXBydG9waHp5ZHZmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM4NjEyMDUsImV4cCI6MjA5OTQzNzIwNX0.51n1xC-J5p7bEnO1_c0g-uvLmjsppV101kauaYEtp0I"; 
+    
+    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const myId = "p_" + Math.random().toString(36).substr(2, 9);
+    const pSize = 30;
+    
+    let localPlayer = {
+        id: myId,
+        x: 100,
+        y: 350,
+        vy: 0,
+        isGrounded: true,
+        score: 0,
+        inMenu: true,
+        isDead: false,
+        color: `hsl(${Math.random() * 360}, 100%, 60%)`
+    };
+    
+    let players = {};
+    let obstacles = [];
+    let gameSpeed = 4;
+    let obstacleTimer = 0;
+    let seed = 0;
+
+    const gravity = 0.6;
+    const jumpForce = -12;
+    const speed = 5;
+    const groundY = 350;
+
+    const channel = supabase.channel('parkour_arena', {
+        config: { broadcast: { self: false, ack: false } }
+    });
+
+    channel
+    .on('broadcast', { event: 'move' }, (payload) => {
+        players[payload.payload.id] = payload.payload;
+    })
+    .on('broadcast', { event: 'state' }, (payload) => {
+        const p = payload.payload;
+        if (p.isDead && players[p.id]) {
+            players[p.id].isDead = true;
+        }
+    })
+    .subscribe();
+
+    const keys = { w: false, a: false, s: false, d: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+    window.addEventListener('keydown', (e) => { if(e.key in keys) keys[e.key] = true; });
+    window.addEventListener('keyup', (e) => { if(e.key in keys) keys[e.key] = false; });
+
+    const mobileKeys = { left: false, right: false, jump: false };
+    setupMobileButton('btnLeft', 'left');
+    setupMobileButton('btnRight', 'right');
+    setupMobileButton('btnJump', 'jump');
+
+    function setupMobileButton(id, keyName) {
+        const btn = document.getElementById(id);
+        btn.addEventListener('touchstart', (e) => { e.preventDefault(); mobileKeys[keyName] = true; });
+        btn.addEventListener('touchend', (e) => { e.preventDefault(); mobileKeys[keyName] = false; });
+    }
+
+    document.getElementById('startBtn').addEventListener('click', () => {
+        document.getElementById('menuOverlay').style.display = 'none';
+        localPlayer.inMenu = false;
+        localPlayer.isDead = false;
+        localPlayer.score = 0;
+        localPlayer.x = 100 + Math.random() * 80;
+        localPlayer.y = groundY;
+        obstacles = [];
+        gameSpeed = 4;
+        obstacleTimer = 0;
+        seed = Math.floor(Date.now() / 100000); 
+    });
+
+    function seededRandom() {
+        let x = Math.sin(seed++) * 10000;
+        return x - Math.floor(x);
+    }
+
+    function updatePhysics() {
+        if (localPlayer.inMenu || localPlayer.isDead) return;
+
+        if (keys.a || keys.ArrowLeft || mobileKeys.left) localPlayer.x -= speed;
+        if (keys.d || keys.ArrowRight || mobileKeys.right) localPlayer.x += speed;
+
+        if (localPlayer.x < 0) localPlayer.x = 0;
+        if (localPlayer.x > canvas.width - pSize) localPlayer.x = canvas.width - pSize;
+
+        if ((keys.w || keys.ArrowUp || mobileKeys.jump) && localPlayer.isGrounded) {
+            localPlayer.vy = jumpForce;
+            localPlayer.isGrounded = false;
+        }
+
+        localPlayer.vy += gravity;
+        localPlayer.y += localPlayer.vy;
+        localPlayer.score += 0.1;
+        gameSpeed += 0.0005;
+        obstacleTimer++;
+        
+        if (obstacleTimer > Math.max(70, 140 - gameSpeed * 5)) {
+            const holeWidth = Math.floor(seededRandom() * 50) + 45;
+            obstacles.push({
+                x: 850,
+                y: 380,
+                w: holeWidth,
+                h: 120
+            });
+            obstacleTimer = 0;
+        }
+
+        obstacles.forEach(obs => obs.x -= gameSpeed);
+        obstacles = obstacles.filter(obs => obs.x > -100);
+
+        let isOnPlatform = localPlayer.y >= groundY;
+        
+        obstacles.forEach(obs => {
+            if (localPlayer.x + pSize > obs.x && localPlayer.x < obs.x + obs.w) {
+                if (localPlayer.y >= groundY) {
+                    isOnPlatform = false;
+                }
+            }
+        });
+
+        if (isOnPlatform) {
+            localPlayer.y = groundY;
+            localPlayer.vy = 0;
+            localPlayer.isGrounded = true;
+        }
+
+        if (localPlayer.y > canvas.height) {
+            localPlayer.isDead = true;
+            channel.send({ type: 'broadcast', event: 'state', payload: { id: myId, isDead: true } });
+            document.getElementById('menuOverlay').style.display = 'flex';
+            document.getElementById('menuTitle').innerText = "BẠN ĐÃ RƠI HỐ!";
+            document.getElementById('menuDesc').innerText = `Điểm sinh tồn đạt được: ${Math.floor(localPlayer.score)}`;
+            document.getElementById('startBtn').innerText = "CHƠI LẠI";
+        }
+
+        channel.send({ type: 'broadcast', event: 'move', payload: localPlayer });
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        updatePhysics();
+
+        ctx.fillStyle = '#0f3460';
+        ctx.fillRect(0, canvas.height - 120, canvas.width, 120);
+
+        obstacles.forEach(obs => {
+            ctx.fillStyle = '#1a1a2e';
+            ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+            ctx.strokeStyle = '#e94560';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(obs.x, obs.y, obs.w, obs.h);
+        });
+        if (!localPlayer.inMenu && !localPlayer.isDead) {
+            ctx.fillStyle = localPlayer.color;
+            ctx.fillRect(localPlayer.x, localPlayer.y, pSize, pSize);
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(localPlayer.x, localPlayer.y, pSize, pSize);
+            
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 18px sans-serif';
+            ctx.fillText(`Điểm của bạn: ${Math.floor(localPlayer.score)}`, 25, 40);
+            ctx.fillText(`Tốc độ chạy: ${gameSpeed.toFixed(1)}x`, 25, 70);
+        }
+
+        Object.keys(players).forEach(id => {
+            const p = players[id];
+            if (p.id === myId || p.inMenu || p.isDead) return;
+
+            ctx.fillStyle = p.color;
+            ctx.fillRect(p.x, p.y, pSize, pSize);
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.font = '12px sans-serif';
+            ctx.fillText(p.id, p.x - 5, p.y - 10);
+});
+requestAnimationFrame(draw);
+}
+draw();
